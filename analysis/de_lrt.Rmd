@@ -1,0 +1,441 @@
+```{r}
+library(tidyverse)
+library(DESeq2)
+```
+
+```{r}
+tox_de_lrt <- readRDS("results/tox_de.lrt.rds")
+```
+
+```{r}
+tox_de_lrt_results <- results(tox_de_lrt, contrast=c("toxicity", "yes", "no"))
+plotMA(tox_de_lrt_results, ylim=c(-1.5, 1.5))
+```
+
+The results of this hypothesis testing approach seem to differ a lot from what we'd see if we used the Wald test. I'm gonna dig in to see if there's any likely confounding factors
+```{r}
+plotDispEsts(tox_de_lrt)
+```
+
+This doesn't look great, which could be bc of excess sparsity even in pseudobulk data or bc of the use of parallel computing which mitigates the amount of pooling information about estimates
+
+Do low-dispersion genes seem to be disproportionately detected as DE?
+```{r}
+intermediate_calcs <- as_tibble(mcols(tox_de_lrt), rownames="gene") %>%
+  mutate(low_disp=dispersion <= 1e-05)
+
+ggplot(intermediate_calcs, aes(x=low_disp, y=abs(LRTStatistic))) +
+  geom_violin()
+```
+
+Kinda inconclusive there, I'm going to focus on significant tests
+```{r}
+de_genes <- results(tox_de_lrt) %>%
+  as_tibble(rownames="gene") %>%
+  filter(padj <= 0.05) 
+```
+
+```{r}
+ggplot(filter(intermediate_calcs, gene %in% de_genes$gene), aes(x=low_disp, y=abs(LRTStatistic))) +
+  geom_violin() +
+  theme_classic()
+```
+
+It's not like all of the highest LRT statistics are driven by low disp estimates, but 
+at the same time it's questionable whether any of those low disp genes are actually 
+likely DE so this doesn't exactly rule out an issue. Does the trend between mean expression and LRT 
+significance vary according to that dispersion estimate?
+
+```{r}
+intermediate_calcs_de <- filter(intermediate_calcs, gene %in% de_genes$gene)
+ggplot(intermediate_calcs_de, aes(x=baseMean, y=LRTStatistic)) +
+  geom_point() +
+  facet_grid(cols=vars(low_disp)) +
+  theme_classic()
+```
+
+Any systematic difference in the quality of the model fit?
+```{r}
+ggplot(filter(intermediate_calcs, gene %in% de_genes$gene), aes(x=low_disp, y=deviance)) +
+  geom_violin() +
+  theme_classic()
+```
+
+
+How are we getting such significant DE from a gene with almost no expression?
+```{r}
+weirdo <- intermediate_calcs_de %>%
+  filter(low_disp==T) %>%
+  slice_max(order_by=LRTStatistic, n=1) %>%
+  pull(gene)
+```
+
+What does the distribution of NPIPB11, the super strong DE, near-zero mean, and low overdispersion, look like?
+```{r}
+load("/project/gilad/jpopp/cellcipher/data/training/tox_de_training_data.RData")
+
+npipb11 <- filter(training_pseudobulk, gene=="NPIPB11") %>%
+  pivot_longer(!gene, names_to="pseudobulk_sample", values_to="expression") %>%
+  left_join(training_metadata, by="pseudobulk_sample")
+
+ggplot(npipb11, aes(x=toxicity, y=expression)) +
+  geom_violin() +
+  facet_grid(rows=vars(celltype), cols=vars(batch)) +
+  theme_classic()
+
+ggplot(npipb11, aes(x=toxicity, y=expression, color=donor_id)) +
+  geom_jitter(size=0.3) +
+  facet_grid(rows=vars(celltype), cols=vars(batch)) +
+  theme_classic()
+```
+Not seeing huge batch issues, let's collapse this a bit
+```{r}
+ggplot(npipb11, aes(x=toxicity, y=expression, color=donor_id)) +
+  geom_jitter(size=0.3) +
+  facet_grid(rows=vars(celltype)) +
+  theme_classic()
+```
+
+There are donor-cell type interaction effects that we should probably include in our models. Does this seem to be an issue with the other extreme example?
+```{r}
+weirdo2 <- intermediate_calcs_de %>%
+  slice_max(order_by=LRTStatistic, n=1) %>%
+  pull(gene)
+```
+
+```{r}
+hes1 <- filter(training_pseudobulk, gene=="HES1") %>%
+  pivot_longer(!gene, names_to="pseudobulk_sample", values_to="expression") %>%
+  left_join(training_metadata, by="pseudobulk_sample")
+
+ggplot(hes1, aes(x=toxicity, y=expression, color=donor_id)) +
+  geom_jitter(size=0.3) +
+  facet_grid(rows=vars(celltype), cols=vars(batch)) +
+  theme_classic()
+
+ggplot(hes1, aes(x=toxicity, y=expression, color=donor_id)) +
+  geom_jitter(size=0.3) +
+  facet_grid(rows=vars(celltype)) +
+  theme_classic()
+```
+
+## Size Factor Influence
+This isn't making a ton of sense, is it clearer if we include size factor information?
+```{r}
+sfs <- as_tibble(colData(tox_de_lrt), rownames="pseudobulk_sample") %>%
+  dplyr::select(c(pseudobulk_sample, sizeFactor))
+
+npipb11 <- npipb11 %>%
+  left_join(sfs, by="pseudobulk_sample")
+
+ggplot(npipb11, aes(x=toxicity, y=expression / sizeFactor, color=donor_id, size=sizeFactor)) +
+  geom_jitter() +
+  facet_grid(rows=vars(celltype)) +
+  theme_classic() +
+  scale_size(range = c(0, 2))
+
+hes1 <- hes1 %>%
+  left_join(sfs, by="pseudobulk_sample") %>% 
+  mutate(logsf=log10(sizeFactor))
+
+ggplot(hes1, aes(x=toxicity, y=expression / sizeFactor, size=sizeFactor, color=donor_id)) +
+  geom_jitter() +
+  facet_grid(rows=vars(celltype), cols=vars(donor_id)) +
+  theme_classic() +
+  scale_size(range = c(0, 2))
+```
+
+Should I be filtering based on library size?
+```{r}
+libSizes <- colSums(as.matrix(column_to_rownames(training_pseudobulk, "gene")))
+hist(log10(libSizes))
+```
+
+Does it seem like the DE genes have an excess of outliers with small library sizes?
+```{r}
+strongest_de <- intermediate_calcs_de %>%
+  slice_max(order_by=LRTStatistic, n=20) %>%
+  pull(gene)
+
+cooks_de <- as_tibble(assays(tox_de_lrt)$cooks[strongest_de,], rownames="gene") %>% 
+  pivot_longer(!gene, names_to="pseudobulk_sample", values_to="cooks") %>%
+  left_join(sfs, by="pseudobulk_sample")
+
+ggplot(cooks_de, aes(x=1, y=cooks, size=sizeFactor, color=pseudobulk_sample)) +
+  geom_jitter() +
+  theme_classic() +
+  scale_size(range = c(0, 1)) +
+  theme(axis.text.x=element_text(angle=45, hjust=1), legend.position="none") +
+  facet_wrap(vars(gene), scales="free_y")
+```
+
+Not very strong, but an alternative way to ask this is, across all DE genes, is a 
+small sample much more likely to be the biggest outlier?
+```{r}
+cooks_de_all <- as_tibble(assays(tox_de_lrt)$cooks[de_genes$gene,], rownames="gene") %>% 
+  pivot_longer(!gene, names_to="pseudobulk_sample", values_to="cooks") %>%
+  group_by(gene) %>% slice_max(cooks, n=1) %>% ungroup() %>%
+  dplyr::count(pseudobulk_sample) %>%
+  left_join(sfs, by="pseudobulk_sample")
+
+ggplot(cooks_de_all, aes(x=sizeFactor, y=n)) +
+  geom_point()
+```
+It does look like there are some samples that are common problems, but it does not look like 
+size factor is the biggest reason why, seems more likely that I missed something in the PC plots
+```{r}
+cooks_de_all %>%
+  filter(n >= 50) %>%
+  ggplot(aes(x=pseudobulk_sample, y=n)) +
+  geom_col() +
+  theme_classic() +
+  theme(axis.text.x=element_text(angle=45, hjust=1))
+```
+So quite a few of these are pluripotent, quite a few are from NA19204, and a couple are even biological replicates
+
+Revisit the PC plots
+```{r}
+load("data/expression_pca.RData")
+outlier_samples <- cooks_de_all %>%
+  filter(n >= 50) %>%
+  pull(pseudobulk_sample)
+loadings <- loadings %>%
+  mutate(outlier_sample=factor(pseudobulk_sample %in% outlier_samples, levels=c(F, T)))
+
+ggplot(loadings, aes(x=PC1, y=PC2, color=outlier_sample, alpha=outlier_sample)) +
+  geom_point() +
+  theme_classic(base_size=15) +
+  facet_wrap(vars(celltype)) +
+  scale_color_manual(values=c("#DEDEDE", "#B51700")) +
+  scale_alpha_manual(values=c(0.2, 1))
+```
+At least in this visualization, these do not look like outliers at all in the PC space. 
+One last thing to check here is whether they look odd when running PCA separately in each cell type
+```{r}
+expression.mat.tmm <- DGEList(counts=expression.mat.filtered) %>% calcNormFactors(method="TMM")
+expression.mat.logcpm <- cpm(expression.mat.tmm, log=T)
+invnorm_transform <- function(x) {
+  qqnorm(x, plot.it=F)$x
+}
+```
+
+Pluripotent
+```{r}
+pluri_samples <- training_metadata %>% filter(celltype == "pluripotent") %>% pull(pseudobulk_sample)
+pluri.pca <- expression.mat.logcpm[,pluri_samples]  %>%
+  apply(1, invnorm_transform) %>% t %>%
+  princomp
+pluri.loadings <- as_tibble(pluri.pca$loadings[,1:2]) %>%
+  mutate(pseudobulk_sample=pluri_samples) %>%
+  left_join(training_metadata, by="pseudobulk_sample") %>%
+  dplyr::rename(PC1=Comp.1, PC2=Comp.2) %>%
+  mutate(outlier_sample=factor(pseudobulk_sample %in% outlier_samples, levels=c(F, T)))
+ggplot(pluri.loadings, aes(x=PC1, y=PC2, color=outlier_sample, alpha=outlier_sample)) +
+  geom_point() +
+  theme_classic(base_size=15) +
+  facet_wrap(vars(celltype)) +
+  scale_color_manual(values=c("#DEDEDE", "#B51700")) +
+  scale_alpha_manual(values=c(0.2, 1))
+```
+
+Ectoderm
+```{r}
+ecto_samples <- training_metadata %>% filter(celltype == "ectoderm") %>% pull(pseudobulk_sample)
+ectoderm.pca <- expression.mat.logcpm[,ecto_samples]  %>%
+  apply(1, invnorm_transform) %>% t %>%
+  princomp
+ectoderm.loadings <- as_tibble(ectoderm.pca$loadings[,1:2]) %>%
+  mutate(pseudobulk_sample=ecto_samples) %>%
+  left_join(training_metadata, by="pseudobulk_sample") %>%
+  dplyr::rename(PC1=Comp.1, PC2=Comp.2) %>%
+  mutate(outlier_sample=factor(pseudobulk_sample %in% outlier_samples, levels=c(F, T)))
+ggplot(ectoderm.loadings, aes(x=PC1, y=PC2, color=outlier_sample, alpha=outlier_sample)) +
+  geom_point() +
+  theme_classic(base_size=15) +
+  facet_wrap(vars(celltype)) +
+  scale_color_manual(values=c("#DEDEDE", "#B51700")) +
+  scale_alpha_manual(values=c(0.2, 1))
+```
+I think we may just be at the limits of what we can do with these rough cell type labels.
+
+Gross expression differences within a cell type will pose a challenge to our models
+
+## Adding a donor * celltype interaction term
+Compare the results before and after including the donor * celltype term
+```{r}
+tox_de_lrt_intx <- readRDS("results/tox_de.lrt.donor_celltype_intx.rds")
+```
+
+```{r}
+tox_de_lrt_intx_results <- results(tox_de_lrt_intx, contrast=c("toxicity", "yes", "no"))
+plotMA(tox_de_lrt_intx_results, ylim=c(-1.5, 1.5))
+plotDispEsts(tox_de_lrt_intx)
+```
+
+Compare P-values under the two models
+```{r}
+p_compare <- tibble("LRT"=results(tox_de_lrt)$pvalue, 
+                    "Intx_LRT"=results(tox_de_lrt_intx)$pvalue, 
+                    gene=rownames(results(tox_de_lrt_intx))) %>%
+  mutate(nlog10_pLRT=-log10(LRT)) %>%
+  mutate(nlog10_pIntx=-log10(Intx_LRT)) %>%
+  mutate(hes=gene=="HES1")
+ggplot(p_compare, aes(x=nlog10_pLRT, y=nlog10_pIntx, color=hes)) +
+  geom_point() +
+  geom_abline(slope=1, intercept=0, linetype="dashed", color="red")
+```
+
+```{r}
+ggplot(npipb11, aes(x=toxicity, y=expression)) +
+  geom_violin() + geom_jitter(size=0.1) +
+  facet_grid(rows=vars(celltype), cols=vars(donor_id)) +
+  theme_classic()
+```
+
+Does this have a big tox LFC?
+```{r}
+tox_de_lrt_intx_results['NPIPB11',]
+```
+
+If we threshold not just on significance but also on LFC, do those genes make any sense? 
+*MISGUIDED ANALYSIS* - LFC defined for the reference donor (NA18519) and cell type (ectoderm)
+```{r}
+upregulated_de_genes <- as_tibble(tox_de_lrt_intx_results, rownames="gene") %>%
+  filter((padj <= 0.05) & log2FoldChange >= 0.4) %>%
+  arrange(desc(log2FoldChange))
+
+downregulated_de_genes <- as_tibble(tox_de_lrt_intx_results, rownames="gene") %>%
+  filter((padj <= 0.05) & log2FoldChange <= -0.4) %>%
+  arrange(log2FoldChange)
+```
+
+```{r fig.width=6, fig.height=2.5}
+tnfaip6 <- filter(training_pseudobulk, gene=="TNFAIP6") %>%
+  pivot_longer(!gene, names_to="pseudobulk_sample", values_to="expression") %>%
+  left_join(training_metadata, by="pseudobulk_sample")
+
+ggplot(tnfaip6, aes(x=toxicity, y=expression)) +
+  geom_violin() + geom_jitter(size=0.1) +
+  facet_grid(rows=vars(celltype), cols=vars(donor_id), scales="free_y") +
+  theme_classic()
+
+ggplot(tnfaip6, aes(x=toxicity, y=expression, color=treatment)) +
+  geom_jitter(size=0.1) +
+  facet_grid(rows=vars(celltype), cols=vars(donor_id), scales="free_y") +
+  theme_classic()
+```
+
+Just threshold on the likelihood ratio test statistic
+```{r}
+lrt_de_genes <- as_tibble(tox_de_lrt_intx_results, rownames="gene") %>%
+  filter(padj <= 1e-6) # 225 genes
+```
+
+
+## GSEA
+```{r}
+gmt_lines <- readLines("/project2/gilad/jpopp/ebQTL/data/gene_sets/c5.go.bp.v2022.1.Hs.symbols.gmt")
+gmt_list <- lapply(gmt_lines, function(x) unlist(strsplit(x, "\t")))
+gmt_list2 <- lapply(gmt_list, function(x) list(x[1], x[2], x[3:length(x)]))
+gmt_df <- as_tibble(do.call("rbind", gmt_list2)) %>%
+  mutate(across(V1:V2, unlist)) %>%
+  dplyr::rename(geneset=V1, link=V2, genes=V3) %>%
+  filter(str_sub(geneset, 1, 4) == "GOBP") # filter to BP 
+
+gmt_mat <- gmt_df %>%
+  dplyr::select(-c(link)) %>%
+  unnest(genes) %>%
+  filter(genes %in% training_pseudobulk$gene) %>%
+  pivot_wider(names_from = genes, values_from = genes, values_fn = length, values_fill = 0) %>%
+  column_to_rownames("geneset")
+
+# subset to genesets with between 10 and 200 genes
+valid_genesets <- (10 <= rowSums(gmt_mat)) & (rowSums(gmt_mat) < 200)
+gmt_mat <- t(as.matrix(gmt_mat[which(valid_genesets),]))
+
+tox_up <- rownames(gmt_mat) %in% upregulated_de_genes$gene
+ora <- gseasusie::fit_ora(X=gmt_mat, y=tox_up)
+ora$bhFishersExact <- p.adjust(ora$pFishersExact, method="BH")
+
+hist(ora$bhFishersExact)
+filter(ora, bhFishersExact <= 0.05)
+```
+
+What are those 4 genes involved in detoxification that are upregulated in the presence of toxic treatments?
+```{r}
+intersect(upregulated_de_genes$gene, unname(unlist(gmt_df[gmt_df$geneset=="GOBP_DETOXIFICATION","genes"])))
+```
+
+```{r fig.width=6, fig.height=2.5}
+hba2 <- filter(training_pseudobulk, gene=="HBA2") %>%
+  pivot_longer(!gene, names_to="pseudobulk_sample", values_to="expression") %>%
+  left_join(training_metadata, by="pseudobulk_sample")
+
+ggplot(hba2, aes(x=toxicity, y=expression)) +
+  geom_violin() + geom_jitter(size=0.1) +
+  facet_grid(rows=vars(celltype), cols=vars(donor_id), scales="free_y") +
+  theme_classic()
+
+ggplot(hba2, aes(x=toxicity, y=expression, color=treatment)) +
+  geom_jitter(size=0.1) +
+  facet_grid(rows=vars(celltype), cols=vars(donor_id), scales="free_y") +
+  theme_classic()
+```
+
+```{r}
+tox_down <- rownames(gmt_mat) %in% downregulated_de_genes$gene
+ora_down <- gseasusie::fit_ora(X=gmt_mat, y=tox_down)
+ora_down$bhFishersExact <- p.adjust(ora_down$pFishersExact, method="BH")
+
+hist(ora_down$bhFishersExact)
+filter(ora_down, bhFishersExact <= 0.05)
+```
+
+### LRT DE
+```{r}
+tox_lrt <- rownames(gmt_mat) %in% lrt_de_genes$gene
+ora_lrt <- gseasusie::fit_ora(X=gmt_mat, y=tox_lrt)
+ora_lrt$bhFishersExact <- p.adjust(ora_lrt$pFishersExact, method="BH")
+
+hist(ora_lrt$bhFishersExact)
+filter(ora_lrt, bhFishersExact <= 0.1)
+```
+```{r}
+intersect(lrt_de_genes$gene, unname(unlist(gmt_df[gmt_df$geneset=="GOBP_CYTOPLASMIC_TRANSLATION","genes"])))
+```
+
+```{r}
+rps3a <- filter(training_pseudobulk, gene=="RPS3A") %>%
+  pivot_longer(!gene, names_to="pseudobulk_sample", values_to="expression") %>%
+  left_join(training_metadata, by="pseudobulk_sample") %>%
+  left_join(sfs, by="pseudobulk_sample")
+
+ggplot(rps3a, aes(x=toxicity, y=expression / sizeFactor, color=donor_id, size=sizeFactor)) +
+  geom_jitter() +
+  facet_grid(rows=vars(celltype), cols=vars(donor_id)) +
+  theme_classic() +
+  scale_size(range = c(0, 2))
+
+rpl10a <- filter(training_pseudobulk, gene=="RPL10A") %>%
+  pivot_longer(!gene, names_to="pseudobulk_sample", values_to="expression") %>%
+  left_join(training_metadata, by="pseudobulk_sample") %>%
+  left_join(sfs, by="pseudobulk_sample")
+
+ggplot(rpl10a, aes(x=toxicity, y=expression / sizeFactor, color=donor_id, size=sizeFactor)) +
+  geom_jitter() +
+  facet_grid(rows=vars(celltype), cols=vars(donor_id)) +
+  theme_classic() +
+  scale_size(range = c(0, 2))
+
+rpl6 <- filter(training_pseudobulk, gene=="RPL6") %>%
+  pivot_longer(!gene, names_to="pseudobulk_sample", values_to="expression") %>%
+  left_join(training_metadata, by="pseudobulk_sample") %>%
+  left_join(sfs, by="pseudobulk_sample")
+
+ggplot(rpl6, aes(x=toxicity, y=expression / sizeFactor, color=donor_id, size=sizeFactor)) +
+  geom_jitter() +
+  facet_grid(rows=vars(celltype), cols=vars(donor_id)) +
+  theme_classic() +
+  scale_size(range = c(0, 2))
+```
+

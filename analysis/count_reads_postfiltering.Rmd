@@ -1,0 +1,172 @@
+```{r}
+library(tidyverse)
+```
+
+## Tox2
+```{r}
+tox2_reads <- vroom("data/Tox2/postfiltering_read_counts_combined/all.combined.tsv") %>% 
+  filter(sample != "sample") %>%
+  mutate_at(vars(!sample), as.numeric)
+```
+
+```{r}
+tox2_reads %>%
+  mutate(frac_post = total_postfiltering_reads / total_reads) %>%
+  ggplot(aes(x=sample, y=frac_post)) + 
+  geom_col() +
+  coord_flip()
+```
+
+Also look at the cells per donor post-filtering
+```{r}
+tox2_metadata <- vroom("data/Tox2/single_cell_objects/metadata_filtered.tsv")
+tox2_breakdown <- tox2_metadata %>%
+  group_by(sample_id) %>%
+  dplyr::count(donor_id) %>%
+  select(sample_id, donor_id, n)
+tox2_breakdown_viz <- pivot_wider(tox2_breakdown, id_cols=sample_id, names_from=donor_id, values_from=n)
+
+ggplot(tox2_breakdown, aes(x=sample_id, y=n, fill=donor_id)) +
+  geom_bar(stat="identity", position="stack") +
+  coord_flip() +
+  ylab("# Cells Post-Filtering")
+```
+
+
+## Tox3
+```{r}
+tox3_reads <- vroom("data/Tox3/postfiltering_read_counts_combined/all.combined.tsv") %>% 
+  filter(sample != "sample") %>%
+  mutate_at(vars(!sample), as.numeric)
+```
+
+```{r}
+tox3_reads %>%
+  mutate(frac_post = total_postfiltering_reads / total_reads) %>%
+  ggplot(aes(x=sample, y=frac_post)) + 
+  geom_col() +
+  coord_flip()
+```
+
+```{r}
+tox3_metadata <- vroom("data/Tox3/single_cell_objects/metadata_filtered.tsv")
+tox3_breakdown <- tox3_metadata %>%
+  group_by(sample_id) %>%
+  dplyr::count(donor_id) %>%
+  select(sample_id, donor_id, n)
+tox3_breakdown_viz <- pivot_wider(tox3_breakdown, id_cols=sample_id, names_from=donor_id, values_from=n)
+
+ggplot(tox3_breakdown, aes(x=sample_id, y=n, fill=donor_id)) +
+  geom_bar(stat="identity", position="stack") +
+  coord_flip() +
+  ylab("# Cells Post-Filtering")
+```
+
+## Tox4
+```{r}
+tox4_reads <- vroom("data/Tox4/postfiltering_read_counts_combined/all.combined.tsv") %>% 
+  filter(sample != "sample") %>%
+  mutate_at(vars(!sample), as.numeric)
+```
+
+```{r}
+tox4_reads %>%
+  mutate(frac_post = total_postfiltering_reads / total_reads) %>%
+  ggplot(aes(x=sample, y=frac_post)) + 
+  geom_col() +
+  coord_flip()
+```
+
+```{r}
+tox4_metadata <- vroom("data/Tox4/single_cell_objects/metadata_filtered.tsv")
+tox4_breakdown <- tox4_metadata %>%
+  group_by(sample_id) %>%
+  dplyr::count(donor_id) %>%
+  select(sample_id, donor_id, n) 
+tox4_breakdown_viz <- pivot_wider(tox4_breakdown, id_cols=sample_id, names_from=donor_id, values_from=n)
+
+ggplot(tox4_breakdown, aes(x=sample_id, y=n, fill=donor_id)) +
+  geom_bar(stat="identity", position="stack") +
+  coord_flip() +
+  ylab("# Cells Post-Filtering")
+```
+
+## Tox5
+```{r}
+tox5_reads <- vroom("data/Tox5/postfiltering_read_counts_combined/all.combined.tsv") %>% 
+  filter(sample != "sample") %>%
+  mutate_at(vars(!sample), as.numeric)
+tox5_metadata <- vroom("data/Tox5/single_cell_objects/metadata_filtered.tsv")
+```
+
+```{r}
+tox5_breakdown <- tox5_metadata %>%
+  group_by(sample_id) %>%
+  dplyr::count(donor_id) %>%
+  select(sample_id, donor_id, n) 
+tox5_breakdown_viz <- pivot_wider(tox5_breakdown, id_cols=sample_id, names_from=donor_id, values_from=n)
+
+tox5_reads %>%
+  mutate(frac_post = total_postfiltering_reads / total_reads) %>%
+  ggplot(aes(x=sample, y=frac_post)) + 
+  geom_col() +
+  coord_flip()
+
+ggplot(tox5_breakdown, aes(x=sample_id, y=n, fill=donor_id)) +
+  geom_bar(stat="identity", position="stack") +
+  coord_flip() +
+  ylab("# Cells Post-Filtering")
+```
+
+```{r}
+tox6_reads <- vroom("data/Tox6/postfiltering_read_counts_combined/all.combined.tsv") %>% 
+  filter(sample != "sample") %>%
+  mutate_at(vars(!sample), as.numeric)
+tox6_metadata <- vroom("data/Tox6/single_cell_objects/metadata_filtered.tsv")
+```
+
+```{r}
+tox6_breakdown <- tox6_metadata %>%
+  group_by(sample_id) %>%
+  dplyr::count(donor_id) %>%
+  select(sample_id, donor_id, n) 
+tox6_breakdown_viz <- pivot_wider(tox6_breakdown, id_cols=sample_id, names_from=donor_id, values_from=n)
+
+tox6_reads %>%
+  mutate(frac_post = total_postfiltering_reads / total_reads) %>%
+  ggplot(aes(x=sample, y=frac_post)) + 
+  geom_col() +
+  coord_flip()
+
+ggplot(tox6_breakdown, aes(x=sample_id, y=n, fill=donor_id)) +
+  geom_bar(stat="identity", position="stack") +
+  coord_flip() +
+  ylab("# Cells Post-Filtering")
+```
+
+## Tox7 
+```{r}
+tox7_reads <- vroom("data/Tox7/postfiltering_read_counts_combined/all.combined.tsv") %>% 
+  filter(sample != "sample") %>%
+  mutate_at(vars(!sample), as.numeric)
+tox7_metadata <- vroom("data/Tox7/single_cell_objects/metadata_filtered.tsv")
+```
+
+```{r}
+tox7_breakdown <- tox7_metadata %>%
+  group_by(sample_id) %>%
+  dplyr::count(donor_id) %>%
+  select(sample_id, donor_id, n) 
+tox7_breakdown_viz <- pivot_wider(tox7_breakdown, id_cols=sample_id, names_from=donor_id, values_from=n)
+
+tox7_reads %>%
+  mutate(frac_post = total_postfiltering_reads / total_reads) %>%
+  ggplot(aes(x=sample, y=frac_post)) + 
+  geom_col() +
+  coord_flip()
+
+ggplot(tox7_breakdown, aes(x=sample_id, y=n, fill=donor_id)) +
+  geom_bar(stat="identity", position="stack") +
+  coord_flip() +
+  ylab("# Cells Post-Filtering")
+```

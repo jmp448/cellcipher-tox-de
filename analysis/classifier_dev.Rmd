@@ -1,0 +1,277 @@
+---
+title: "Classifier Dev"
+output: html_notebook
+---
+
+```{r}
+library(tidyverse)
+library(tidymodels)
+library(glmnet)
+library(doParallel)
+```
+
+```{r}
+expression_effects <- read_tsv("../results/tidy_classifier_input.tsv") %>%
+  mutate(toxic=factor(toxic))
+```
+
+To start off, we'll split our data - first an 80/20 split for totally held out test data, then 
+cross-validation 4-way split among the training data
+```{r}
+set.seed(100)
+expression_split <- initial_split(expression_effects, prop=0.8, strata=toxic)
+train_exp <- training(expression_split)
+test_exp <- testing(expression_split)
+
+vfold_exp <- vfold_cv(data=train_exp, v=4, strata=toxic)
+```
+
+<!-- Next, specify that treatment won't be used as a predictor -->
+<!-- ```{r} -->
+<!-- tox_recipe <- train_exp %>% -->
+<!--   recipe(toxic ~ .) %>% -->
+<!--   update_role(everything(), new_role="predictor") %>% -->
+<!--   update_role(treatment, new_role="id variable") %>% -->
+<!--   update_role(toxic, new_role="outcome") -->
+<!-- summary(tox_recipe) -->
+<!-- ``` -->
+
+<!-- Set up a lasso-penalized logistic regression model -->
+<!-- ```{r} -->
+<!-- lambda_values <- tibble(penalty=c(0.1, 1, 3.162, 10, 31.62, 100, 316.2, 1000, 3162, 10000, 31620, 1e5)) -->
+<!-- tox_model <- logistic_reg(penalty = tune(), mixture = double(1)) %>% -->
+<!--   set_engine("glmnet", path_values=lambda_values$penalty) %>% -->
+<!--   set_mode("classification") -->
+<!-- ``` -->
+
+<!-- Put these together into a workflow -->
+<!-- ```{r} -->
+<!-- tox_wflow <- workflow() %>% -->
+<!--   add_recipe(tox_recipe) %>% -->
+<!--   add_model(tox_model) -->
+<!-- ``` -->
+
+<!-- Tune the regularization hyperparameter -->
+<!-- ```{r} -->
+<!-- registerDoParallel(cores=5) -->
+<!-- set.seed(2024) -->
+<!-- tune_tox_results <- tune_grid(object=tox_wflow, resamples=vfold_exp, grid=lambda_values) -->
+<!-- tuning_results <- tune_tox_results %>% -->
+<!--   collect_metrics() -->
+
+<!-- ggplot(filter(tuning_results, .metric=="accuracy"), aes(x=log10(penalty), y=mean)) + -->
+<!--   geom_point() + -->
+<!--   ylab("Accuracy") + -->
+<!--   theme_classic() -->
+
+<!-- ggplot(filter(tuning_results, .metric=="roc_auc"), aes(x=log10(penalty), y=mean)) + -->
+<!--   geom_point() + -->
+<!--   ylab("AUROC") + -->
+<!--   theme_classic() -->
+
+<!-- show_best(tune_tox_results, metric="accuracy", n=1) -->
+<!-- ``` -->
+Let's dig into the regression path here
+```{r}
+fold_1_x <- as_tibble(vfold_exp$splits[[1]]$data[vfold_exp$splits[[1]]$in_id,]) %>%
+  dplyr::select(-c("treatment", "toxic")) %>%
+  as.matrix()
+fold_1_y <- as_tibble(vfold_exp$splits[[1]]$data[vfold_exp$splits[[1]]$in_id,]) %>%
+  dplyr::select(c("toxic")) %>%
+  mutate(toxic=as.numeric(toxic)) %>%
+  pull(toxic)
+fold_1_fit <- glmnet(fold_1_x, fold_1_y, family="binomial", alpha=0.5)
+fold_1_predictors <- rownames(fold_1_fit$beta)[abs(fold_1_fit$beta[,100]) > 0]
+fold_1_predictors
+```
+
+Try on another fold, is it a similar set?
+```{r}
+fold_2_x <- as_tibble(vfold_exp$splits[[2]]$data[vfold_exp$splits[[2]]$in_id,]) %>%
+  dplyr::select(-c("treatment", "toxic")) %>%
+  as.matrix()
+fold_2_y <- as_tibble(vfold_exp$splits[[2]]$data[vfold_exp$splits[[2]]$in_id,]) %>%
+  dplyr::select(c("toxic")) %>%
+  mutate(toxic=as.numeric(toxic)) %>%
+  pull(toxic)
+fold_2_fit <- glmnet(fold_2_x, fold_2_y, family="binomial", alpha=0.5)
+fold_2_predictors <- rownames(fold_2_fit$beta)[abs(fold_2_fit$beta[,100]) > 0]
+fold_2_predictors
+```
+
+```{r}
+fold_3_x <- as_tibble(vfold_exp$splits[[3]]$data[vfold_exp$splits[[3]]$in_id,]) %>%
+  dplyr::select(-c("treatment", "toxic")) %>%
+  as.matrix()
+fold_3_y <- as_tibble(vfold_exp$splits[[3]]$data[vfold_exp$splits[[3]]$in_id,]) %>%
+  dplyr::select(c("toxic")) %>%
+  mutate(toxic=as.numeric(toxic)) %>%
+  pull(toxic)
+fold_3_fit <- glmnet(fold_3_x, fold_3_y, family="binomial", alpha=0.5)
+fold_3_predictors <- rownames(fold_3_fit$beta)[abs(fold_3_fit$beta[,100]) > 0]
+fold_3_predictors
+```
+```{r}
+fold_4_x <- as_tibble(vfold_exp$splits[[4]]$data[vfold_exp$splits[[4]]$in_id,]) %>%
+  dplyr::select(-c("treatment", "toxic")) %>%
+  as.matrix()
+fold_4_y <- as_tibble(vfold_exp$splits[[4]]$data[vfold_exp$splits[[4]]$in_id,]) %>%
+  dplyr::select(c("toxic")) %>%
+  mutate(toxic=as.numeric(toxic)) %>%
+  pull(toxic)
+fold_4_fit <- glmnet(fold_4_x, fold_4_y, family="binomial", alpha=0.5)
+fold_4_predictors <- rownames(fold_4_fit$beta)[abs(fold_4_fit$beta[,100]) > 0]
+fold_4_predictors
+```
+
+```{r}
+intersect(fold_1_predictors, intersect(fold_2_predictors, intersect(fold_3_predictors, fold_4_predictors)))
+```
+
+<!-- Now dig into more detailed metrics - we cannot have any false negatives (safe, labeled toxic) -->
+<!-- ```{r} -->
+<!-- tox_final_model <- logistic_reg(penalty = 0.0045, mixture = 0.5) %>% -->
+<!--   set_engine("glmnet") %>% -->
+<!--   set_mode("classification") -->
+
+<!-- tox_final_wflow <- workflow() %>% -->
+<!--   add_recipe(tox_recipe) %>% -->
+<!--   add_model(tox_final_model) -->
+
+<!-- tox_fulltrain_fit <- fit(tox_final_wflow, data=train_exp) -->
+
+<!-- add_preds <- train_exp %>% -->
+<!--   mutate(predicted_toxicity=as.numeric(predict(tox_fulltrain_fit, new_data=train_exp)$.pred_class)) %>% -->
+<!--   dplyr::select(treatment, toxic, predicted_toxicity)  -->
+<!-- levels(add_preds$toxic) <- list("Toxic"  = "TRUE", "Safe" = "FALSE") -->
+<!-- levels(add_preds$predicted_toxicity) <- list("Toxic"  = "TRUE", "Safe" = "FALSE") -->
+
+<!-- tox_preds <- train_exp %>% dplyr::select(treatment, toxic) -->
+<!-- levels(tox_preds$toxic) <- list("Toxic"  = "TRUE", "Safe" = "FALSE") -->
+<!-- tox_preds$pred_tox_likelihood <- predict(tox_fulltrain_fit, new_data=test_exp, type="prob")$.pred_TRUE -->
+<!-- tox_roc <- roc_curve(data=tox_preds, truth=toxic, pred_tox_likelihood) -->
+<!-- autoplot(tox_roc) -->
+<!-- ``` -->
+
+Just look at fold 1
+
+First, a sanity check, how are we doing on the training data?
+```{r}
+fold_1_interpretable_y <- as_tibble(vfold_exp$splits[[1]]$data[vfold_exp$splits[[1]]$in_id,]) %>%
+  dplyr::select(c("toxic")) 
+
+preds_training_y <- predict(fold_1_fit, newx=fold_1_x, s=0.0045, type="response")
+fold_1_training_preds <- as_tibble(fold_1_interpretable_y) %>%
+  mutate(true_toxicity=recode_factor(toxic, "FALSE"="Safe", "TRUE"="Toxic")) %>%
+  mutate(pred_toxicity=1-preds_training_y[,1])
+  
+fold_1_training_roc <- roc_curve(data=fold_1_training_preds, truth=true_toxicity, pred_toxicity)
+autoplot(fold_1_training_roc)
+
+fold_1_holdout_x <- as_tibble(vfold_exp$splits[[1]]$data[setdiff(seq(43), vfold_exp$splits[[1]]$in_id),]) %>%
+  dplyr::select(-c("treatment", "toxic")) %>%
+  as.matrix()
+fold_1_holdout_y <- as_tibble(vfold_exp$splits[[1]]$data[setdiff(seq(43), vfold_exp$splits[[1]]$in_id),]) %>%
+  dplyr::select(c("toxic")) 
+
+preds_holdout_y <- predict(fold_1_fit, newx=fold_1_holdout_x, s=0.0045, type="response")
+fold_1_holdout_preds <- as_tibble(fold_1_holdout_y) %>%
+  mutate(true_toxicity=recode_factor(toxic, "FALSE"="Safe", "TRUE"="Toxic")) %>%
+  mutate(pred_toxicity=1-preds_holdout_y[,1])
+  
+fold_1_roc <- roc_curve(data=fold_1_holdout_preds, truth=true_toxicity, pred_toxicity)
+autoplot(fold_1_roc)
+```
+
+
+```{r}
+fold_2_interpretable_y <- as_tibble(vfold_exp$splits[[2]]$data[vfold_exp$splits[[2]]$in_id,]) %>%
+  dplyr::select(c("toxic")) 
+
+preds_training_y <- predict(fold_2_fit, newx=fold_2_x, s=0.0045, type="response")
+fold_2_training_preds <- as_tibble(fold_2_interpretable_y) %>%
+  mutate(true_toxicity=recode_factor(toxic, "FALSE"="Safe", "TRUE"="Toxic")) %>%
+  mutate(pred_toxicity=1-preds_training_y[,1])
+  
+fold_2_training_roc <- roc_curve(data=fold_2_training_preds, truth=true_toxicity, pred_toxicity)
+autoplot(fold_2_training_roc)
+
+fold_2_holdout_x <- as_tibble(vfold_exp$splits[[2]]$data[setdiff(seq(43), vfold_exp$splits[[2]]$in_id),]) %>%
+  dplyr::select(-c("treatment", "toxic")) %>%
+  as.matrix()
+fold_2_holdout_y <- as_tibble(vfold_exp$splits[[2]]$data[setdiff(seq(43), vfold_exp$splits[[2]]$in_id),]) %>%
+  dplyr::select(c("toxic")) 
+
+preds_holdout_y <- predict(fold_2_fit, newx=fold_2_holdout_x, s=0.0045, type="response")
+fold_2_holdout_preds <- as_tibble(fold_2_holdout_y) %>%
+  mutate(true_toxicity=recode_factor(toxic, "FALSE"="Safe", "TRUE"="Toxic")) %>%
+  mutate(pred_toxicity=1-preds_holdout_y[,1])
+  
+fold_2_roc <- roc_curve(data=fold_2_holdout_preds, truth=true_toxicity, pred_toxicity)
+autoplot(fold_2_roc)
+```
+Add the treatment labels
+```{r}
+stopifnot(all.equal(vfold_exp$splits[[2]]$data[setdiff(seq(43), vfold_exp$splits[[2]]$in_id),]$toxic, fold_2_holdout_preds$toxic))
+fold_2_holdout_y %>%
+  mutate(treatment=vfold_exp$splits[[2]]$data[setdiff(seq(43), vfold_exp$splits[[2]]$in_id),]$treatment) %>%
+  mutate(true_toxicity=recode_factor(toxic, "FALSE"="Safe", "TRUE"="Toxic")) %>%
+  mutate(pred_toxicity=1-preds_holdout_y[,1]) %>% 
+  dplyr::select(treatment, true_toxicity, pred_toxicity) %>%
+  arrange(desc(pred_toxicity))
+```
+
+
+```{r}
+fold_3_interpretable_y <- as_tibble(vfold_exp$splits[[3]]$data[vfold_exp$splits[[3]]$in_id,]) %>%
+  dplyr::select(c("toxic")) 
+
+preds_training_y <- predict(fold_3_fit, newx=fold_3_x, s=0.0045, type="response")
+fold_3_training_preds <- as_tibble(fold_3_interpretable_y) %>%
+  mutate(true_toxicity=recode_factor(toxic, "FALSE"="Safe", "TRUE"="Toxic")) %>%
+  mutate(pred_toxicity=1-preds_training_y[,1])
+  
+fold_3_training_roc <- roc_curve(data=fold_3_training_preds, truth=true_toxicity, pred_toxicity)
+autoplot(fold_3_training_roc)
+
+fold_3_holdout_x <- as_tibble(vfold_exp$splits[[3]]$data[setdiff(seq(43), vfold_exp$splits[[3]]$in_id),]) %>%
+  dplyr::select(-c("treatment", "toxic")) %>%
+  as.matrix()
+fold_3_holdout_y <- as_tibble(vfold_exp$splits[[3]]$data[setdiff(seq(43), vfold_exp$splits[[3]]$in_id),]) %>%
+  dplyr::select(c("toxic")) 
+
+preds_holdout_y <- predict(fold_3_fit, newx=fold_3_holdout_x, s=0.0045, type="response")
+fold_3_holdout_preds <- as_tibble(fold_3_holdout_y) %>%
+  mutate(true_toxicity=recode_factor(toxic, "FALSE"="Safe", "TRUE"="Toxic")) %>%
+  mutate(pred_toxicity=1-preds_holdout_y[,1])
+  
+fold_3_roc <- roc_curve(data=fold_3_holdout_preds, truth=true_toxicity, pred_toxicity)
+autoplot(fold_3_roc)
+```
+
+```{r}
+fold_4_interpretable_y <- as_tibble(vfold_exp$splits[[4]]$data[vfold_exp$splits[[4]]$in_id,]) %>%
+  dplyr::select(c("toxic")) 
+
+preds_training_y <- predict(fold_4_fit, newx=fold_4_x, s=0.0045, type="response")
+fold_4_training_preds <- as_tibble(fold_4_interpretable_y) %>%
+  mutate(true_toxicity=recode_factor(toxic, "FALSE"="Safe", "TRUE"="Toxic")) %>%
+  mutate(pred_toxicity=1-preds_training_y[,1])
+  
+fold_4_training_roc <- roc_curve(data=fold_4_training_preds, truth=true_toxicity, pred_toxicity)
+autoplot(fold_4_training_roc)
+
+fold_4_holdout_x <- as_tibble(vfold_exp$splits[[4]]$data[setdiff(seq(43), vfold_exp$splits[[4]]$in_id),]) %>%
+  dplyr::select(-c("treatment", "toxic")) %>%
+  as.matrix()
+fold_4_holdout_y <- as_tibble(vfold_exp$splits[[4]]$data[setdiff(seq(43), vfold_exp$splits[[4]]$in_id),]) %>%
+  dplyr::select(c("toxic")) 
+
+preds_holdout_y <- predict(fold_4_fit, newx=fold_4_holdout_x, s=0.0045, type="response")
+fold_4_holdout_preds <- as_tibble(fold_4_holdout_y) %>%
+  mutate(true_toxicity=recode_factor(toxic, "FALSE"="Safe", "TRUE"="Toxic")) %>%
+  mutate(pred_toxicity=1-preds_holdout_y[,1])
+  
+fold_4_roc <- roc_curve(data=fold_4_holdout_preds, truth=true_toxicity, pred_toxicity)
+autoplot(fold_4_roc)
+```
