@@ -24,4 +24,4 @@ system.time(
                       parallel=T)
 )
 print("finished model fit")
-saveRDS(deseq_full, paste0("results/tox_de.lrt.", ct, ".rds"))
+saveRDS(deseq_full, paste0("results/germlayer/tox_de.", ct, ".rds"))
