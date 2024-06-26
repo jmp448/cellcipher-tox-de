@@ -1,0 +1,16 @@
+.DS_Store
+.snakemake/*
+Snakefile
+analysis/.ipynb_checkpoints/*
+benchmarks/*
+code/.DS_Store
+data/*
+envs/*
+figs/*
+logs/*
+metadata_071023/*
+models/*
+results/*
+rules/.ipynb_checkpoints/*
+slurmy/*
+temp/*
